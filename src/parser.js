@@ -25,6 +25,9 @@ export default (ctx) => {
       this.prefix = 'mailer';
       this.config = get(ctx, 'config.mailer');
       this.defaultConfig = {
+        log: {
+          level: 'error',
+        },
         interval: 60000,
         timeout: 300000,
         limit: 100,
@@ -40,11 +43,11 @@ export default (ctx) => {
     async run() {
       if (!this.config) return;
       this.logger = ctx.createLogger({
+        ...this.config.log,
         name: 'mailer',
-        level: 'trace',
       });
-      this.log('imap debug');
-      this.log('imap interval', this.config.interval);
+      this.logger.trace('imap debug');
+      this.logger.trace('imap interval', this.config.interval);
       // try {
       //   // console.time('imapParse');
       //   // await this.sync({ box: 'INBOX' });
@@ -61,13 +64,13 @@ export default (ctx) => {
       }
     }
     stop() {
-      this.log('parser stop');
+      this.logger.trace('parser stop');
       // forEach(this.connections, (connection) => {
       //   this.disconnect({ connection });
       // });
     }
     async syncAll() {
-      this.log('syncAll');
+      this.logger.trace('syncAll');
       const { mailboxes = [], boxDelay, mailboxDelay } = this.config;
       await Promise.mapSeries(mailboxes, async (mailbox) => {
         let boxes = get(mailbox, 'imap.boxes');
@@ -109,7 +112,7 @@ export default (ctx) => {
       try {
         await this.syncAll();
       } catch (err) {
-        console.error('imap syncAll', err);  //eslint-disable-line
+        this.logger.error('imap syncAll', err);  //eslint-disable-line
       }
       // console.log(config.interval, 'config.interval');
       setTimeout(() => this.runCron(), this.config.interval);
@@ -120,33 +123,32 @@ export default (ctx) => {
       const { boxName } = box;
       return new Promise((resolve, reject) => {
         const connection = new Imap(mailbox.imap.config);
-        this.log('createConnection...', { box });
+        this.logger.trace('createConnection...', { box });
         function openInbox(cb) {
           connection.openBox(boxName, true, cb);
         }
         let isReady = false;
         connection.once('ready', () => {
-          this.log('openBox', box);
+          this.logger.trace('openBox', box);
           openInbox((err) => {
             if (err) {
-              this.log('openBox error', err);
+              this.logger.trace('imap openBox error', err);
               return reject(err);
             }
             isReady = true;
-            this.log('box opened', { box });
+            this.logger.trace('imap box opened', { box });
             connection.removeAllListeners();
             return resolve(connection);
           });
         });
         connection.on('error', (err) => {
-          this.log('imap connection error', err);
-          console.error('imap connection error', err);  //eslint-disable-line
+          this.logger.error('imap connection error', err);
           connection.removeAllListeners();
           return reject(err);
         });
         connection.on('end', () => {
           // for andruxa debug
-          this.log('connection end', { box });
+          this.logger.trace('imap connection end', { box });
           if (!isReady) {
             connection.removeAllListeners();
             reject();
@@ -162,7 +164,7 @@ export default (ctx) => {
         return connection.end((err, res) => {
           connection.removeAllListeners();
           if (err) {
-            console.error('imap disconnect', err);
+            this.logger.error(err);
             return reject(err);
           }
           return resolve(res);
@@ -227,7 +229,6 @@ export default (ctx) => {
     _getBoxes({
       box, boxName, parentBoxName = '', result, delimiter = '',
     }) {
-      this.log('getChildBoxes');
       if (!box.children) {
         result.push({ boxName: `${parentBoxName}${delimiter}${boxName}` });
       } else {
@@ -247,7 +248,7 @@ export default (ctx) => {
     }
     async getBoxes(imapConfig) {
       const result = [];
-      this.log('getBoxes');
+      this.logger.trace('imap getBoxes');
       const connection = new Imap(imapConfig);
       connection.connect();
       return new Promise((resolve, reject) => {
@@ -262,22 +263,12 @@ export default (ctx) => {
             forEach(boxes, (box, boxName) => {
               this._getBoxes({ box, boxName, result });
             });
-            this.log('getBoxes:boxes', result);
+            this.logger.trace('imap getBoxes:result', result);
             return resolve(result);
-            // forEach(boxes, (box, name) => {
-            //   if (!box.children) {
-            //     result.push({ boxName: name });
-            //   } else {
-            //     result = [...result, this.getChildBoxes({ box, name })];
-            //   }
-            // });
-            // this.log('getBoxes complete', result);
-            // return resolve(boxes);
           });
         });
         connection.on('error', (err) => {
-          this.log('imap getBoxes error', err);
-          console.error('imap getBoxes error', err);  //eslint-disable-line
+          this.logger.error('imap getBoxes error', err);
           connection.removeAllListeners();
           return reject(err);
         });
@@ -307,10 +298,10 @@ export default (ctx) => {
             .format('LL');
           filter.push(['SINCE', date]);
         } catch (err) {
-          console.error('imap, sync date error', err);  //eslint-disable-line
+          this.logger.error('imap, sync date error', err);
         }
       }
-      this.log('filter', filter);
+      this.logger.trace('imap filter', filter);
       if (!filter.length) filter.push('ALL');
       try {
         await this.searchAndSave({
@@ -318,12 +309,12 @@ export default (ctx) => {
         });
       } catch (err) {
         connection.removeAllListeners();
-        console.error('searchAndSave', err);
+        this.logger.error('imap searchAndSave', err);
       }
     }
     async getMessages(f, length) {
       const messages = [];
-      this.log('getMessages start', length);
+      this.logger.trace('imap getMessages start', length);
       return new Promise((resolve, reject) => {
         // const fetchTimeout = setTimeout(() => {
         //   reject(new Error('timeout'));
@@ -340,7 +331,7 @@ export default (ctx) => {
                 mp.on('data', async (obj) => {
                   message.obj = obj;
                   messages.push(message);
-                  this.log(`${messages.length}/${length}`, 'getMessages');
+                  this.logger.trace(`${messages.length}/${length}`, 'getMessages');
                   mp.removeAllListeners();
                   msg.removeAllListeners();
                   if (messages.length === length) {
@@ -348,33 +339,33 @@ export default (ctx) => {
                     resolve(messages);
                   }
                 }).on('error', (dataError) => {
-                  console.error('imap getMessages f on data', dataError)  //eslint-disable-line
+                  this.logger.error('imap getMessages f on data', dataError)  //eslint-disable-line
                   mp.removeAllListeners();
                   msg.removeAllListeners();
                   f.removeAllListeners();
                   reject(dataError);
                 });
               }).on('error', (headersError) => {
-                console.error('imap getMessages f on headers', headersError)  //eslint-disable-line
+                this.logger.error('imap getMessages f on headers', headersError)  //eslint-disable-line
                 mp.removeAllListeners();
                 msg.removeAllListeners();
                 f.removeAllListeners();
                 reject(headersError);
               });
             }).on('error', (attrErrors) => {
-              console.error('imap getMessages f on attributes', attrErrors)  //eslint-disable-line
+              this.logger.error('imap getMessages f on attributes', attrErrors)  //eslint-disable-line
               msg.removeAllListeners();
               f.removeAllListeners();
               reject(attrErrors);
             });
           }).on('error', (bodyError) => {
-            console.error('imap getMessages f on body', bodyError)  //eslint-disable-line
+            this.logger.error('imap getMessages f on body', bodyError)  //eslint-disable-line
             msg.removeAllListeners();
             f.removeAllListeners();
             reject(bodyError);
           });
         }).on('error', (error) => {
-          console.error('imap getMessages f on message', error)  //eslint-disable-line
+          this.logger.error('imap getMessages f on message', error)  //eslint-disable-line
           f.removeAllListeners();
           reject(error);
         });
@@ -383,16 +374,16 @@ export default (ctx) => {
     async searchAndSave({
       filter, connection, box, mailbox,
     }) {
-      this.log('searchAndSave', { filter, box });
+      this.logger.trace('imap searchAndSave', { filter, box });
       return new Promise((resolve, reject) => {
         try {
           // const fetchTimeout = setTimeout(() => {
           //   reject(new Error('timeout'));
           // }, this.config.timeout);
           // если парсить слишком долго, завис, то заканчиваем парсинг
-          this.log('search', { box, filter, mailbox });
+          this.logger.trace('imap search', { box, filter, mailbox });
           return connection.search(filter, async (searchErr, results) => {
-            this.log('search result', { searchErr, results });
+            this.logger.trace('imap search result', { searchErr, results });
             if (searchErr) return reject(searchErr);
             if (!results.length) return resolve([]);
             const { Email } = this.models;
@@ -420,7 +411,7 @@ export default (ctx) => {
             }
             if (!results.length) return resolve([]);
             connection.on('error', (err) => {
-              console.error('imap connection on error', err);  //eslint-disable-line
+              this.logger.error('imap connection on error', err);  //eslint-disable-line
               return reject(err);
             });
             const f = connection.fetch(results, {
@@ -429,7 +420,7 @@ export default (ctx) => {
             });
             const messages = await this.getMessages(f, results.length);
             // clearTimeout(fetchTimeout);
-            this.log('getMessages completed');
+            this.logger.trace('imap getMessages completed');
             await Promise.map(messages, async ({ attrs, obj, headers }, i) => {
               const message = {
                 headers: null,
@@ -501,13 +492,13 @@ export default (ctx) => {
               } catch (parseError) {
                 console.error('imap sync search on "data"', parseError);  //eslint-disable-line
               }
-              this.log(`${i + 1}/${results.length}`, 'saveEmail');
+              this.logger.trace(`${i + 1}/${results.length}`, 'saveEmail');
             }, { concurrency: 5 });
-            this.log('parse completed', box);
+            this.logger.trace('parse completed', box);
             return resolve();
           });
         } catch (err) {
-          console.error('imap search', err);  //eslint-disable-line
+          this.logger.error('imap search', err);  //eslint-disable-line
           throw err;
         }
       });
